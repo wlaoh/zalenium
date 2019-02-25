@@ -1,5 +1,29 @@
 package de.zalando.ep.zalenium.container.kubernetes;
 
+import de.zalando.ep.zalenium.container.ContainerClient;
+import de.zalando.ep.zalenium.container.ContainerClientRegistration;
+import de.zalando.ep.zalenium.container.ContainerCreationStatus;
+import de.zalando.ep.zalenium.util.Environment;
+import io.fabric8.kubernetes.api.model.ContainerStateTerminated;
+import io.fabric8.kubernetes.api.model.ContainerStatus;
+import io.fabric8.kubernetes.api.model.DoneablePod;
+import io.fabric8.kubernetes.api.model.EnvVar;
+import io.fabric8.kubernetes.api.model.HostAlias;
+import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.PodList;
+import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.Toleration;
+import io.fabric8.kubernetes.api.model.Volume;
+import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.client.KubernetesClient;
+import io.fabric8.kubernetes.client.dsl.ExecListener;
+import io.fabric8.kubernetes.client.dsl.ExecWatch;
+import okhttp3.Response;
+import org.apache.commons.lang.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.InetAddress;
@@ -18,30 +42,6 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-
-import org.apache.commons.lang.StringUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import de.zalando.ep.zalenium.container.ContainerClient;
-import de.zalando.ep.zalenium.container.ContainerClientRegistration;
-import de.zalando.ep.zalenium.container.ContainerCreationStatus;
-import de.zalando.ep.zalenium.util.Environment;
-import io.fabric8.kubernetes.api.model.ContainerStateTerminated;
-import io.fabric8.kubernetes.api.model.ContainerStatus;
-import io.fabric8.kubernetes.api.model.DoneablePod;
-import io.fabric8.kubernetes.api.model.EnvVar;
-import io.fabric8.kubernetes.api.model.HostAlias;
-import io.fabric8.kubernetes.api.model.Pod;
-import io.fabric8.kubernetes.api.model.PodList;
-import io.fabric8.kubernetes.api.model.Quantity;
-import io.fabric8.kubernetes.api.model.Volume;
-import io.fabric8.kubernetes.api.model.VolumeMount;
-import io.fabric8.kubernetes.api.model.Toleration;
-import io.fabric8.kubernetes.client.KubernetesClient;
-import io.fabric8.kubernetes.client.dsl.ExecListener;
-import io.fabric8.kubernetes.client.dsl.ExecWatch;
-import okhttp3.Response;
 
 public class KubernetesContainerClient implements ContainerClient {
 
@@ -65,6 +65,8 @@ public class KubernetesContainerClient implements ContainerClient {
     private List<HostAlias> hostAliases = new ArrayList<>();
     private Map<String, String> nodeSelector = new HashMap<>();
     private List<Toleration> tolerations = new ArrayList<>();
+    private String imagePullPolicy;
+    private List<LocalObjectReference> imagePullSecrets;
 
     private final Map<String, Quantity> seleniumPodLimits = new HashMap<>();
     private final Map<String, Quantity> seleniumPodRequests = new HashMap<>();
@@ -101,6 +103,7 @@ public class KubernetesContainerClient implements ContainerClient {
             discoverHostAliases();
             discoverNodeSelector();
             discoverTolerations();
+            discoverImagePullSecrets();
 
             buildResourceMaps();
 
@@ -139,6 +142,8 @@ public class KubernetesContainerClient implements ContainerClient {
                 }
             }
         }
+        // Default to imagePullPolicy: Always if ENV variable "ZALENIUM_KUBERNETES_IMAGE_PULL_POLICY" is not provided
+        imagePullPolicy = environment.getStringEnvVariable("ZALENIUM_KUBERNETES_IMAGE_PULL_POLICY", ImagePullPolicyType.Always.name());
     }
 
     private void discoverHostAliases() {
@@ -159,6 +164,13 @@ public class KubernetesContainerClient implements ContainerClient {
         final List<Toleration> configuredTolerations = zaleniumPod.getSpec().getTolerations();
         if (configuredTolerations != null && !configuredTolerations.isEmpty()) {
             tolerations = configuredTolerations;
+        }
+    }
+
+    private void discoverImagePullSecrets() {
+        List<LocalObjectReference> configuredPullSecrets = zaleniumPod.getSpec().getImagePullSecrets();
+        if (!configuredPullSecrets.isEmpty()) {
+            imagePullSecrets = configuredPullSecrets;
         }
     }
 
@@ -237,7 +249,7 @@ public class KubernetesContainerClient implements ContainerClient {
         final CountDownLatch latch = new CountDownLatch(1);
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
 
-        logger.info(String.format("%s %s", containerId, Arrays.toString(command)));
+        logger.debug("{} {}", containerId, Arrays.toString(command));
         ExecWatch exec = client.pods().withName(containerId).writingOutput(baos).writingError(baos).usingListener(new ExecListener() {
 
             @Override
@@ -268,7 +280,7 @@ public class KubernetesContainerClient implements ContainerClient {
                 exec.close();
             }
 
-            logger.info(String.format("%s completed %s", containerId, Arrays.toString(command)));
+            logger.debug(String.format("%s completed %s", containerId, Arrays.toString(command)));
             logger.debug(String.format("%s %s", containerId, baos.toString()));
 
             return null;
@@ -291,24 +303,8 @@ public class KubernetesContainerClient implements ContainerClient {
     }
 
     @Override
-    public int getRunningContainers(String image) {
-        PodList list = client.pods().withLabels(createdByZaleniumMap).list();
-        logger.debug("Pods in the list " + list.getItems().size());
-
-        int count=0;
-        for (Pod pod : list.getItems()) {
-            String phase = pod.getStatus().getPhase();
-            if ("Running".equalsIgnoreCase(phase) || "Pending".equalsIgnoreCase(phase)) {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
-    @Override
     public ContainerCreationStatus createContainer(String zaleniumContainerName, String image, Map<String, String> envVars,
-                                String nodePort) {
+                               String nodePort) {
         String containerIdPrefix = String.format("%s-%s-", zaleniumAppName, nodePort);
 
         // Convert the environment variables into the Kubernetes format.
@@ -329,6 +325,8 @@ public class KubernetesContainerClient implements ContainerClient {
         labels.putAll(appLabelMap);
         labels.putAll(podSelector);
         config.setLabels(labels);
+        config.setImagePullPolicy(imagePullPolicy);
+        config.setImagePullSecrets(imagePullSecrets);
         config.setMountedSharedFoldersMap(mountedSharedFoldersMap);
         config.setHostAliases(hostAliases);
         config.setNodeSelector(nodeSelector);
@@ -350,7 +348,7 @@ public class KubernetesContainerClient implements ContainerClient {
         deleteSeleniumPods();
 
         // Register a shutdown hook to cleanup pods
-        Runtime.getRuntime().addShutdownHook(new Thread(this::deleteSeleniumPods, "KubernetsContainerClient shutdown hook"));
+        Runtime.getRuntime().addShutdownHook(new Thread(this::deleteSeleniumPods, "KubernetesContainerClient shutdown hook"));
     }
 
     @Override
@@ -365,7 +363,7 @@ public class KubernetesContainerClient implements ContainerClient {
             return null;
         }
     }
-    
+
     public boolean isReady(ContainerCreationStatus container) {
         Pod pod = client.pods().withName(container.getContainerName()).get();
         if (pod == null) {
@@ -383,24 +381,24 @@ public class KubernetesContainerClient implements ContainerClient {
     public boolean isTerminated(ContainerCreationStatus container) {
         Pod pod = client.pods().withName(container.getContainerName()).get();
         if (pod == null) {
-        	logger.info("Container {} has no pod - terminal.", container);
+            logger.info("Container {} has no pod - terminal.", container);
             return true;
         }
         else {
-        	List<ContainerStatus> containerStatuses = pod.getStatus().getContainerStatuses();
-        	Optional<ContainerStateTerminated> terminated = containerStatuses.stream()
-        		.flatMap(status -> Optional.ofNullable(status.getState()).map(Stream::of).orElse(Stream.empty()))
-        		.flatMap(state -> Optional.ofNullable(state.getTerminated()).map(Stream::of).orElse(Stream.empty()))
-        		.findFirst();
-        	
-        	terminated.ifPresent(state -> logger.info("Container {} is {} - terminal.", container, state));
-        	
-        	return terminated.isPresent();
+              List<ContainerStatus> containerStatuses = pod.getStatus().getContainerStatuses();
+              Optional<ContainerStateTerminated> terminated = containerStatuses.stream()
+                      .flatMap(status -> Optional.ofNullable(status.getState()).map(Stream::of).orElse(Stream.empty()))
+                      .flatMap(state -> Optional.ofNullable(state.getTerminated()).map(Stream::of).orElse(Stream.empty()))
+                      .findFirst();
+
+              terminated.ifPresent(state -> logger.info("Container {} is {} - terminal.", container, state));
+
+              return terminated.isPresent();
         }
     }
 
     private void deleteSeleniumPods() {
-        logger.info("About to clean up any left over selenium pods created by Zalenium");
+        logger.info("About to clean up any left over docker-selenium pods created by Zalenium");
         client.pods().withLabels(createdByZaleniumMap).delete();
     }
 
@@ -436,7 +434,7 @@ public class KubernetesContainerClient implements ContainerClient {
             registration.setNoVncPort(noVncPortInt);
         }
         else {
-            logger.warn(String.format("%s Couldn't find NOVNC_PORT, live preview will not work.", containerId));
+            logger.warn("{} Couldn't find NOVNC_PORT, live preview will not work.", containerId);
         }
 
         registration.setIpAddress(currentPod.getStatus().getPodIP());
@@ -537,6 +535,10 @@ public class KubernetesContainerClient implements ContainerClient {
         REQUEST, LIMIT
     }
 
+    private enum ImagePullPolicyType {
+        Always, IfNotPresent
+    }
+
     public static DoneablePod createDoneablePodDefaultImpl(PodConfiguration config) {
         DoneablePod doneablePod = config.getClient().pods()
                 .createNew()
@@ -557,7 +559,7 @@ public class KubernetesContainerClient implements ContainerClient {
                     .addNewContainer()
                         .withName("selenium-node")
                         .withImage(config.getImage())
-                        .withImagePullPolicy("Always")
+                        .withImagePullPolicy(config.getImagePullPolicy())
                         .addAllToEnv(config.getEnvVars())
                         .addNewVolumeMount()
                             .withName("dshm")
@@ -571,17 +573,18 @@ public class KubernetesContainerClient implements ContainerClient {
                         // so then we can initiate a registration.
                         .withNewReadinessProbe()
                             .withNewExec()
-                                .addToCommand(new String[] {"/bin/sh", "-c", "http_proxy=\"\" curl -s http://`getent hosts ${HOSTNAME} | awk '{ print $1 }'`:" 
+                                .addToCommand(new String[] {"/bin/sh", "-c", "http_proxy=\"\" curl -s http://`getent hosts ${HOSTNAME} | awk '{ print $1 }'`:"
                                         + config.getNodePort() + "/wd/hub/status | jq .value.ready | grep true"})
                             .endExec()
                             .withInitialDelaySeconds(5)
                             .withFailureThreshold(60)
                             .withPeriodSeconds(1)
-                            .withTimeoutSeconds(1)
+                            .withTimeoutSeconds(5)
                             .withSuccessThreshold(1)
                         .endReadinessProbe()
                     .endContainer()
                     .withRestartPolicy("Never")
+                    .withImagePullSecrets(config.getImagePullSecrets())
                 .endSpec();
 
         // Add the shared folders if available

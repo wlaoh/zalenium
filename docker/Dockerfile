@@ -1,10 +1,10 @@
 #== Ubuntu xenial is 16.04, i.e. FROM ubuntu:16.04
 # Find latest images at https://hub.docker.com/r/library/ubuntu/
 # Layer size: big: ~130 MB
-FROM ubuntu:xenial-20181005
-ENV UBUNTU_FLAVOR="xenial" \
-    UBUNTU_DATE="20181005"
 
+FROM ubuntu:xenial-20181113
+ENV UBUNTU_FLAVOR="xenial" \
+    UBUNTU_DATE="20181113"
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu
 
 #== Ubuntu flavors - common
@@ -12,8 +12,6 @@ RUN  echo "deb ${UBUNTU_MIRROR} ${UBUNTU_FLAVOR} main universe\n" > /etc/apt/sou
   && echo "deb ${UBUNTU_MIRROR} ${UBUNTU_FLAVOR}-updates main universe\n" >> /etc/apt/sources.list \
   && echo "deb ${UBUNTU_MIRROR} ${UBUNTU_FLAVOR}-security main universe\n" >> /etc/apt/sources.list
 
-MAINTAINER Team EP <diemol+team-ep@gmail.com>
-# https://github.com/docker/docker/pull/25466#discussion-diff-74622923R677
 LABEL maintainer "Team EP <diemol+team-ep@gmail.com>"
 
 # No interactive frontend during docker build
@@ -235,34 +233,16 @@ RUN if [ "${kubernetesSlimVersion}" = "false" ]; then \
 # Var `DOCKER` points to which binary to use at runtime
 ENV DOCKER_HOST="unix:///var/run/docker.sock" \
     DOCKER_BUCKET="download.docker.com" \
-    DOCKER="17.12.1-ce"
+    DOCKER="18.09.0"
 
 #----------------------------
-# Docker 17.12.0-ce -- 15 MB
-#----------------------------
-# https://github.com/docker-library/docker/blob/master/17.09/Dockerfile
-# Note: Starting with 1.13, newer CLIs can talk to older daemons
-RUN if [ "${kubernetesSlimVersion}" = "false" ]; then \
-        set -x \
-        && DOCKER_VERSION="17.12.1-ce" \
-        && curl -fSL "https://${DOCKER_BUCKET}/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
-                -o docker.tgz \
-        && tar -xzvf docker.tgz \
-        && mv docker/docker /usr/bin/docker-${DOCKER_VERSION} \
-        && rm -rf docker/ && rm docker.tgz \
-        && docker-${DOCKER_VERSION} --version | grep "${DOCKER_VERSION}"; \
-    else \
-        echo "Skipping adding Docker because of kubernetes slim mode"; \
-    fi
-
-#----------------------------
-# Docker 18.03.1-ce -- 15 MB
+# Docker 18.09 -- 15 MB
 #----------------------------
 # https://github.com/docker-library/docker/blob/master/18.03/Dockerfile
 # Note: Starting with 1.13, newer CLIs can talk to older daemons
 RUN if [ "${kubernetesSlimVersion}" = "false" ]; then \
         set -x \
-        && DOCKER_VERSION="18.03.1-ce" \
+        && DOCKER_VERSION="18.09.0" \
         && curl -fSL "https://${DOCKER_BUCKET}/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" \
                 -o docker.tgz \
         && tar -xzvf docker.tgz \
@@ -279,7 +259,7 @@ RUN if [ "${kubernetesSlimVersion}" = "false" ]; then \
 # ------------------------#
 # https://docs.saucelabs.com/reference/sauce-connect/
 # Layer size: medium: ~13 MB
-ENV SAUCE_CONN_VER="sc-4.5.1-linux" \
+ENV SAUCE_CONN_VER="sc-4.5.3-linux" \
     SAUCE_CONN_DOWN_URL="https://saucelabs.com/downloads"
 RUN cd /tmp \
   && wget -nv "${SAUCE_CONN_DOWN_URL}/${SAUCE_CONN_VER}.tar.gz" \
@@ -352,9 +332,10 @@ ENV ZAL_VER="${project.build.finalName}" \
     SELENIUM_WAIT_FOR_CONTAINER="true"
 
 COPY entry.sh log warn error /usr/bin/
-COPY nginx.conf /etc/nginx/
+COPY nginx.conf /home/seluser/
 COPY css/ /home/seluser/css/
 COPY js/ /home/seluser/js/
+COPY img/ /home/seluser/img/
 COPY zalenium.sh \
  LICENSE.md \
  Analytics.md \
@@ -364,16 +345,13 @@ COPY zalenium.sh \
  wait-saucelabs.sh \
  start-testingbot.sh \
  wait-testingbot.sh \
- list_template.html \
  dashboard_template.html \
- index.html \
  zalando.ico \
  logging_info.properties \
  logging_debug.properties \
  logback.xml \
  /home/seluser/
 COPY scm-source.json /
-COPY ${ZAL_VER}.jar /home/seluser/${ZAL_VER}.jar
 
 #-----------------#
 # Fix perms again #
@@ -397,6 +375,8 @@ RUN sudo chmod +x /home/seluser/zalenium.sh \
 RUN sudo chgrp -R 0 /home/seluser && \
     sudo chmod -R g=u /home/seluser && \
     sudo chmod -R u+x /home/seluser
+
+COPY ${ZAL_VER}.jar /home/seluser/${ZAL_VER}.jar
 
 # IMPORTANT: Using the string form `CMD "entry.sh"` without
 # brackets [] causes Docker to run your process
