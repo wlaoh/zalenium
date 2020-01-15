@@ -3,10 +3,14 @@ package de.zalando.ep.zalenium.container.kubernetes;
 import io.fabric8.kubernetes.api.model.EnvVar;
 import io.fabric8.kubernetes.api.model.HostAlias;
 import io.fabric8.kubernetes.api.model.LocalObjectReference;
+import io.fabric8.kubernetes.api.model.PodSecurityContext;
 import io.fabric8.kubernetes.api.model.Quantity;
+import io.fabric8.kubernetes.api.model.SecurityContext;
 import io.fabric8.kubernetes.api.model.Toleration;
 import io.fabric8.kubernetes.api.model.Volume;
 import io.fabric8.kubernetes.api.model.VolumeMount;
+import io.fabric8.kubernetes.api.model.Pod;
+import io.fabric8.kubernetes.api.model.OwnerReference;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import org.testng.annotations.BeforeTest;
 import org.testng.annotations.Test;
@@ -138,4 +142,33 @@ public class PodConfigurationTest {
         assertThat(podConfiguration.getImagePullSecrets().size(), is(1));
         assertThat(podConfiguration.getImagePullSecrets().get(0), is(secret));
     }
+
+    @Test
+    public void setOwner() {
+        Pod ownerPod = mock(Pod.class);
+        podConfiguration.setOwner(ownerPod);
+        assertThat(podConfiguration.getOwnerRef(), is(ownerPod));
+    }
+    
+    @Test
+    public void testSetPodSecurityContext() {
+        PodSecurityContext securityContext = mock(PodSecurityContext.class);
+        podConfiguration.setPodSecurityContext(securityContext);
+        assertThat(podConfiguration.getPodSecurityContext(), is(securityContext));
+    }
+
+    @Test
+    public void testSetContainerSecurityContext() {
+        SecurityContext securityContext = mock(SecurityContext.class);
+        podConfiguration.setContainerSecurityContext(securityContext);
+        assertThat(podConfiguration.getContainerSecurityContext(), is(securityContext));
+    }
+
+    @Test
+    public void testSetSchedulerName() {
+        final String schedulerName = "custom-scheduler";
+        podConfiguration.setSchedulerName(schedulerName);
+        assertThat(podConfiguration.getSchedulerName(), is(schedulerName));
+    }
+
 }

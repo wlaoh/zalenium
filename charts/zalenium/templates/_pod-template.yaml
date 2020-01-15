@@ -3,12 +3,14 @@ metadata:
   labels:
     {{- include "zalenium.labels" . | nindent 4 }}
   annotations:
+    {{- toYaml .Values.hub.podAnnotations | nindent 4 }}
 spec:
-  {{- if .Values.hub.securityContext.enabled }}
+  {{- if (.Values.hub.schedulerName) }}
+  schedulerName: {{ .Values.hub.schedulerName }}
+  {{- end}}
+
   securityContext:
-    fsGroup: {{ .Values.hub.securityContext.fsGroup }}
-    runAsUser: {{ .Values.hub.securityContext.runAsUser }}
-  {{- end }}
+    {{- toYaml .Values.hub.podSecurityContext | nindent 4 }}
   {{- if .Values.hub.pullSecrets }}
   imagePullSecrets:
     - name: {{ .Values.hub.imagePullSecret }}
@@ -42,12 +44,14 @@ spec:
     - name: {{ .Chart.Name }}
       image: "{{ .Values.hub.image }}:{{ .Values.hub.tag }}"
       imagePullPolicy: {{ .Values.hub.pullPolicy }}
+      securityContext:
+        {{- toYaml .Values.hub.containerSecurityContext | nindent 8 }}
       ports:
         - containerPort: {{ .Values.hub.port }}
           protocol: TCP
       livenessProbe:
         httpGet:
-          path: {{ if and (.Values.ingress.path) (not (eq .Values.ingress.path "/")) }}{{ .Values.ingress.path }}{{ end }}/grid/console
+          path: {{ if .Values.ingress.path }}{{ .Values.ingress.path }}{{ end }}/status
           port: {{ .Values.hub.port }}
           {{- if eq true .Values.hub.basicAuth.enabled }}
           httpHeaders:
@@ -59,7 +63,7 @@ spec:
         timeoutSeconds: {{ .Values.hub.livenessTimeout }}
       readinessProbe:
         httpGet:
-          path: {{ if and (.Values.ingress.path) (not (eq .Values.ingress.path "/")) }}{{ .Values.ingress.path }}{{ end }}/grid/console
+          path: {{ if .Values.ingress.path }}{{ .Values.ingress.path }}{{ end }}/status
           port: {{ .Values.hub.port }}
           {{- if eq true .Values.hub.basicAuth.enabled }}
           httpHeaders:
@@ -76,6 +80,18 @@ spec:
           value: {{ .Values.hub.memRequest | quote }}
         - name: ZALENIUM_KUBERNETES_MEMORY_LIMIT
           value: {{ .Values.hub.memLimit | quote }}
+        {{- if .Values.hub.seleniumNodeHost }}
+        - name: SELENIUM_NODE_HOST
+          value: {{ .Values.hub.seleniumNodeHost | quote }}
+        {{- end }}
+        {{- if .Values.hub.seleniumNodeSelector }}
+        - name: ZALENIUM_KUBERNETES_NODE_SELECTOR
+          value: {{ .Values.hub.seleniumNodeSelector | quote }}
+        {{- end }}
+        {{- if .Values.hub.seleniumTolerations }}
+        - name: ZALENIUM_KUBERNETES_TOLERATIONS
+          value: {{ .Values.hub.seleniumTolerations | quote }}
+        {{- end }}
         {{- if .Values.hub.basicAuth.enabled }}
         - name: GRID_USER
           valueFrom:
@@ -114,8 +130,14 @@ spec:
           value: {{ .Values.hub.keepOnlyFailedTests | quote }}
         - name: RETENTION_PERIOD
           value: {{ .Values.hub.retentionPeriod | quote }}
+        {{- if .Values.ingress.path }}
         - name: CONTEXT_PATH
           value: {{ .Values.ingress.path | quote }}
+        {{- end }}
+        {{- if .Values.ingress.maxBodySize }}
+        - name: NGINX_MAX_BODY_SIZE
+          value: {{ .Values.ingress.maxBodySize | quote }}
+        {{- end }}
         {{- if .Values.hub.sauceLabsEnabled }}
         - name: SAUCE_LABS_ENABLED
           value: {{ .Values.hub.sauceLabsEnabled | quote }}
@@ -140,10 +162,22 @@ spec:
         - name: TESTINGBOT_SECRET
           value: {{ .Values.hub.testingBotSecret | quote }}
         {{- end }}
+        {{- if .Values.hub.lambdaTestEnabled }}
+        - name: LT_ENABLED
+          value: {{ .Values.hub.lambdaTestEnabled | quote }}
+        - name: LT_USERNAME
+          value: {{ .Values.hub.lambdaUsername | quote }}
+        - name: LT_ACCESS_KEY
+          value: {{ .Values.hub.lambdaAccessKey | quote }}
+        {{- end }}
         {{- range $key, $val := .Values.hub.env }}
         - name: {{ $key | quote }}
           value: {{ $val | quote }}
         {{ end }}
+        {{- if .Values.hub.timeToWaitToStart }}
+        - name: TIME_TO_WAIT_TO_START
+          value: {{ .Values.hub.timeToWaitToStart | quote }}
+        {{- end }}
       args:
         - start
       resources:
@@ -153,16 +187,21 @@ spec:
           mountPath: /home/seluser/videos
         - name: {{ template "zalenium.fullname" . }}-data
           mountPath: /tmp/mounted
+{{- if .Values.hostAliases }}
+  hostAliases:
+{{ toYaml .Values.hostAliases | indent 4 }}
+{{- end }}
   serviceAccountName: {{ template "zalenium.serviceAccountName" . }}
   {{- if .Values.nodeSelector.enabled }}
   nodeSelector:
     {{ .Values.nodeSelector.key }}: {{ .Values.nodeSelector.value | quote }}
   {{- end }}
-  {{- if .Values.tolerations.enabled }}
+  {{- if .Values.tolerations }}
   tolerations:
-    - key: {{ .Values.tolerations.key }}
-      operator: {{ .Values.tolerations.operator }}
-      value: {{ .Values.tolerations.value | quote }}
-      effect: {{ .Values.tolerations.effect }}
+{{ toYaml .Values.tolerations | indent 4 }}
   {{- end }}
+  {{- if .Values.affinity }}
+  affinity:
+{{ toYaml .Values.affinity | indent 4 }}
+  {{- end -}}
 {{- end }}

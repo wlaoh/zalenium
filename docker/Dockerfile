@@ -2,9 +2,9 @@
 # Find latest images at https://hub.docker.com/r/library/ubuntu/
 # Layer size: big: ~130 MB
 
-FROM ubuntu:xenial-20181113
+FROM ubuntu:xenial-20191024
 ENV UBUNTU_FLAVOR="xenial" \
-    UBUNTU_DATE="20181113"
+    UBUNTU_DATE="20191024"
 ARG UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu
 
 #== Ubuntu flavors - common
@@ -248,6 +248,7 @@ RUN if [ "${kubernetesSlimVersion}" = "false" ]; then \
         && tar -xzvf docker.tgz \
         && mv docker/docker /usr/bin/docker-${DOCKER_VERSION} \
         && rm -rf docker/ && rm docker.tgz \
+        && ln -s /usr/bin/docker-${DOCKER_VERSION} /usr/bin/docker \
         && docker-${DOCKER_VERSION} --version | grep "${DOCKER_VERSION}"; \
     else \
         echo "Skipping adding Docker because of kubernetes slim mode"; \
@@ -300,6 +301,35 @@ RUN if [ "${testingBotEnabled}" = "true" ]; then \
   else echo "Testing Bot Disabled"; \
   fi
 
+# ------------------------------#
+# CrossBrowserTesting Tunneling #
+# ------------------------------#
+# https://help.crossbrowsertesting.com/local-connection/general/local-tunnel-overview/
+ENV CBT_TUNNEL_URL="https://github.com/crossbrowsertesting/cbt-tunnel-nodejs/releases/download/v0.9.9" \
+    CBT_TUNNEL_ZIP="cbt_tunnels-linux-x64.zip"
+RUN cd /tmp \
+  && wget -nv "${CBT_TUNNEL_URL}/${CBT_TUNNEL_ZIP}" \
+  && unzip "${CBT_TUNNEL_ZIP}" \
+  && rm "${CBT_TUNNEL_ZIP}" \
+  && mv cbt_tunnels-linux-x64 /usr/local/bin \
+  && which cbt_tunnels-linux-x64
+
+# -----------------------#
+# LambdaTest Tunneling #
+# -----------------------#
+# https://www.lambdatest.com/support/docs/testing-locally-hosted-pages/
+# Layer size: medium: ~16 MB
+ENV LT_TUNNEL_URL="https://s3.amazonaws.com/lambda-tunnel" \
+    LT_TUNNEL_ZIP="LT_Linux.zip"
+RUN cd /tmp \
+  && wget -nv "${LT_TUNNEL_URL}/${LT_TUNNEL_ZIP}" \
+  && unzip "${LT_TUNNEL_ZIP}" \
+  && chmod 755 LT \
+  && rm "${LT_TUNNEL_ZIP}" \
+  && mv LT /usr/local/bin \
+  && which LT
+
+
 #===================================================
 # Run the following commands as non-privileged user
 #===================================================
@@ -326,13 +356,17 @@ ENV ZAL_VER="${project.build.finalName}" \
     TESTINGBOT_TUNNEL_OPTS="--se-port 4447" \
     TESTINGBOT_TUNNEL="false" \
     TESTINGBOT_WAIT_TIMEOUT="2m" \
+    CBT_TUNNEL_ID="zalenium" \
+    CBT_TUNNEL="false" \
+    LT_TUNNEL_ID="zalenium" \
+    LT_TUNNEL="false" \
     SELENIUM_HUB_PARAMS="" \
     SELENIUM_NODE_PARAMS="" \
     SELENIUM_CONTAINER_LABELS="" \
     SELENIUM_WAIT_FOR_CONTAINER="true"
 
 COPY entry.sh log warn error /usr/bin/
-COPY nginx.conf /home/seluser/
+COPY nginx.conf error.html /home/seluser/
 COPY css/ /home/seluser/css/
 COPY js/ /home/seluser/js/
 COPY img/ /home/seluser/img/
@@ -345,6 +379,10 @@ COPY zalenium.sh \
  wait-saucelabs.sh \
  start-testingbot.sh \
  wait-testingbot.sh \
+ start-cbt.sh \
+ wait-cbt.sh \
+ start-lambdatest.sh \
+ wait-lambdatest.sh \
  dashboard_template.html \
  zalando.ico \
  logging_info.properties \
@@ -363,6 +401,10 @@ RUN sudo chmod +x /home/seluser/zalenium.sh \
   && sudo chmod +x /home/seluser/wait-saucelabs.sh \
   && sudo chmod +x /home/seluser/start-testingbot.sh \
   && sudo chmod +x /home/seluser/wait-testingbot.sh \
+  && sudo chmod +x /home/seluser/start-cbt.sh \
+  && sudo chmod +x /home/seluser/wait-cbt.sh \
+  && sudo chmod +x /home/seluser/start-lambdatest.sh \
+  && sudo chmod +x /home/seluser/wait-lambdatest.sh \
   && sudo chmod +x /usr/bin/log \
   && sudo chmod +x /usr/bin/warn \
   && sudo chmod +x /usr/bin/error \

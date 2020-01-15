@@ -120,8 +120,7 @@ function setTestInformation($testName, $browser, $browserVersion, $platform, $pr
     }
     screenResolutionTimeZone.append("<span class=\"float-right\"><img alt=\"Retention Date\" src=\"img/retention-date.png\" " +
         "class=\"mr-1\" width=\"48px\" height=\"48px\"><small>" + $retentionDate + "</small></span>");
-
-    if ($build.length > 0) {
+    if ($build.toString().length > 0) {
         const buildElement = $("#build");
         buildElement.html("");
         buildElement.removeClass("p-0");
@@ -183,7 +182,7 @@ function searchTestsList() {
         $(".list-group-item").each(function(){
             $(this).hide();
             const currentKeyword = $(this).text().toUpperCase() + $(this).data("browser").toUpperCase() +
-                $(this).data("platform").toUpperCase() + $(this).data("test-build").toUpperCase() +
+                $(this).data("platform").toUpperCase() + $(this).data("test-build").toString().toUpperCase() +
                 $(this).data("test-status").toUpperCase() + $(this).data("proxy-name").toUpperCase() +
                 $(this).data("time-zone").toUpperCase();
             let allTokensFound = true;

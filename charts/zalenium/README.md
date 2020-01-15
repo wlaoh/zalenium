@@ -14,13 +14,26 @@ This chart bootstraps a [Zalenium](https://github.com/zalando/zalenium) deployme
 
 - Kubernetes 1.5+ with Beta APIs enabled
 
-## Installing the Chart
 
-To install the chart with the release name `my-release`:
+## Installing the Chart from local repo
+
+To install the chart with the release name `my-release`(provided you have cloned this repo):
 
 ```console
 $ helm install --name my-release local/zalenium
 ```
+
+## Install from this GitHub repo:
+
+A sample installation steps would look like this:
+```
+helm repo add zalenium-github https://raw.githubusercontent.com/zalando/zalenium/master/charts/zalenium
+helm install --name my-release --namespace my-zalenium zalenium-github/zalenium
+```
+Where:
+* `zalenium-github` is the name of this repo (you may call it whatever you want);
+* `my-release` is the Helm's release name;
+* `my-zalenium` is the Kubernetes namespace in which Zalenium will be installed (will be created if not exists);
 
 The command deploys Zalenium on the Kubernetes cluster in the default configuration. The [configuration](#configuration) section lists the parameters that can be configured during installation.
 
@@ -34,7 +47,12 @@ To uninstall/delete the `my-release` deployment:
 $ helm delete my-release
 ```
 
-The command removes all the Kubernetes components associated with the chart and deletes the release.
+To remove the release name from the Helm store (so you may use it again), issue the following command:
+```
+$ helm delete my-release --purge
+```
+
+> **Note**: The command removes all the Kubernetes components associated with the chart and deletes the release.
 
 ## Configuration
 
@@ -61,10 +79,13 @@ See Zalenium's [usage examples](https://github.com/zalando/zalenium/blob/master/
 | `hub.tag` | The zalenium hub image tag | `3` |
 | `hub.pullPolicy` | The pull policy for the hub image | `IfNotPresent` |
 | `hub.port` | The port the hub listens on | `4444` |
+| `hub.podSecurityContext` | Pod Security Context used by hub and selenium grids |  |
+| `hub.containerSecurityContext` | Container Security Context used by hub and selenium grids |  |
 | `hub.livenessTimeout` | Timeout for probe Hub liveness via HTTP request on Hub console | `1` |
 | `hub.readinessTimeout` | Timeout for probe Hub readiness via HTTP request on Hub console | `1` |
 | `hub.localVolumesRoot` | The root directory to store HostPath volumes (e.g. if running in minikube) | `/tmp` |
 | `hub.resources` | The resources for the hub container, defaults to minimum half a cpu and maximum 512 mb RAM | `{"limits":{"cpu":".5", "memory":"512Mi"}}` |
+| `hub.serviceAnnotations` | Annotations to be added to the service | `{}` |
 | `hub.serviceType` | The Service type | `NodePort` |
 | `hub.serviceSourceRanges` | The list of IPs allowed to connect to the service. Important - in command line you have to escape commas, e.g.: `{"10.10.0.0/24\,10.20.0.0/16"}` | `{"0.0.0.0/0"}` |
 | `hub.serviceSessionAffinity` | The session affinity for the hub service| `None` |
@@ -73,6 +94,7 @@ See Zalenium's [usage examples](https://github.com/zalando/zalenium/blob/master/
 | `hub.sauceLabsEnabled` | Enable SauceLabs | false |
 | `hub.browserStackEnabled` | Enable BrowserStack | false |
 | `hub.testingBotEnabled` | Enable TestingBot | false |
+| `hub.lambdaTestEnabled` | Enable LambdaTest | false |
 | `hub.videoRecordingEnabled` | Enable video recording | true |
 | `hub.cpuRequest` | CPU requested for browser pods.  The hub passes this value to the k8s API | 500m |
 | `hub.cpuLimit` | CPU limit for browser pods.  The hub passes this value to the k8s API | 1000m |
@@ -93,9 +115,16 @@ See Zalenium's [usage examples](https://github.com/zalando/zalenium/blob/master/
 | `hub.browserStackKey` | Credentials for browserstack | blank |
 | `hub.testingBotKey` | Credentials for testingbot | blank |
 | `hub.testingBotSecret` | Credentials for testingbot | blank |
+| `hub.lambdaUsername` | Username for lambdatest | blank |
+| `hub.lambdaAccessKey` | Access key for lambdatest | blank |
 | `hub.basicAuth.enabled` | Enables basic authentication | false |
 | `hub.basicAuth.username` | Username for basic authentication | zalenium |
 | `hub.basicAuth.password` | Password for basic authentication | password |
+| `hub.openshift.route.enabled`  | Set to true if you want to create a route for zalenium | false |
+| `hub.openshift.route.hostname` | If you want to have a specific hostname specify it here | blank |
+| `hub.openshift.route.tls` | Configures tls settings for OpenShift route. Set it to empty if you don't want it | edge termination + redirect |
+| `hub.openshift.route.tls` | Configures tls settings for OpenShift route. Set it to empty if you don't want it | edge termination + redirect |
+| `hostAliases` | Allow the modification of the hosts file inside a container | `[]` |
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install`. For example,
 
@@ -111,4 +140,4 @@ Alternatively, a YAML file that specifies the values for the above parameters ca
 $ helm install --name my-release -f values.yaml local/zalenium
 ```
 
-> **Tip**: You can use the default [values.yaml](local/zalenium/values.yaml)
+> **Tip**: You can use the default [values.yaml](./values.yaml)

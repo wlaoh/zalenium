@@ -9,7 +9,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TimeZone;
 
+import com.spotify.docker.client.messages.ContainerInfo;
 import de.zalando.ep.zalenium.container.DockerContainerClient;
+import de.zalando.ep.zalenium.container.swarm.SwarmContainerClient;
+import de.zalando.ep.zalenium.container.swarm.SwarmUtilities;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.RandomUtils;
 import org.openqa.grid.common.RegistrationRequest;
@@ -52,6 +55,8 @@ public class DockeredSeleniumStarter {
     static final String SELENIUM_NODE_PARAMS = "ZALENIUM_NODE_PARAMS";
     @VisibleForTesting
     static final String DEFAULT_SELENIUM_NODE_PARAMS = "";
+    static final String SELENIUM_NODE_HOST = "SELENIUM_NODE_HOST";
+    static final String DEFAULT_SELENIUM_NODE_HOST = "0.0.0.0";
     private static final int VNC_PORT_GAP = 20000;
     private static final String DEFAULT_ZALENIUM_CONTAINER_NAME = "zalenium";
     private static final String ZALENIUM_CONTAINER_NAME = "ZALENIUM_CONTAINER_NAME";
@@ -80,11 +85,13 @@ public class DockeredSeleniumStarter {
     private static String dockerSeleniumImageName;
     private static int browserTimeout;
     private static Map<String, String> zaleniumProxyVars = new HashMap<>();
-    
+    private static String hubIpAddress = null;
+    private static String seleniumNodeHost = DEFAULT_SELENIUM_NODE_HOST;
+
     static {
-    	readConfigurationFromEnvVariables();
+        readConfigurationFromEnvVariables();
     }
-    
+
     /*
      * Reading configuration values from the env variables, if a value was not provided it falls back to defaults.
      */
@@ -107,13 +114,16 @@ public class DockeredSeleniumStarter {
         String seleniumNodeParams = env.getStringEnvVariable(SELENIUM_NODE_PARAMS, DEFAULT_SELENIUM_NODE_PARAMS);
         setSeleniumNodeParameters(seleniumNodeParams);
 
+        String seleniumNodeHost = env.getStringEnvVariable(SELENIUM_NODE_HOST, DEFAULT_SELENIUM_NODE_HOST);
+        setSeleniumNodeHost(seleniumNodeHost);
+
         setBrowserTimeout(env.getIntEnvVariable("SEL_BROWSER_TIMEOUT_SECS", DEFAULT_SEL_BROWSER_TIMEOUT_SECS));
 
         sendAnonymousUsageInfo = env.getBooleanEnvVariable("ZALENIUM_SEND_ANONYMOUS_USAGE_INFO", false);
 
         addProxyVars();
     }
-    
+
     private static void addProxyVars() {
         Arrays.asList(HTTP_PROXY_ENV_VARS).forEach(httpEnvVar -> {
             String proxyValue = env.getStringEnvVariable(httpEnvVar, null);
@@ -162,7 +172,7 @@ public class DockeredSeleniumStarter {
     public static String getContainerName() {
         return Optional.ofNullable(containerName).orElse(DEFAULT_ZALENIUM_CONTAINER_NAME);
     }
-    
+
     private static void setContainerName(String containerName) {
         DockeredSeleniumStarter.containerName = containerName;
     }
@@ -181,6 +191,14 @@ public class DockeredSeleniumStarter {
 
     public static void setSeleniumNodeParameters(String seleniumNodeParameters) {
         DockeredSeleniumStarter.seleniumNodeParameters = seleniumNodeParameters;
+    }
+
+    public static String getSeleniumNodeHost() {
+        return seleniumNodeHost;
+    }
+
+    public static void setSeleniumNodeHost(String seleniumNodeHost) {
+        DockeredSeleniumStarter.seleniumNodeHost = seleniumNodeHost;
     }
 
     public static int getBrowserTimeout() {
@@ -244,51 +262,65 @@ public class DockeredSeleniumStarter {
 
         // Check and configure time zone capabilities when they have been passed in the test config.
         TimeZone timeZone = getConfiguredTimeZoneFromCapabilities(requestedCapability);
-        
+
         ContainerCreationStatus containerCreationStatus = startDockerSeleniumContainer(timeZone, screenSize);
         if (containerCreationStatus.isCreated()) {
             LOGGER.debug("Created container {} with dimensions {} and tz {}.",
-                containerCreationStatus.getContainerName(), screenSize, timeZone);
-            return containerCreationStatus;        	
+                    containerCreationStatus.getContainerName(), screenSize, timeZone);
+            return containerCreationStatus;
         }
         else {
-        	LOGGER.warn("No container was created, will wait until request is processed again...");
-        	return null;
+            LOGGER.warn("No container was created, will wait until request is processed again...");
+            return null;
         }
     }
-    
+
+    public static String getHubIpAddress() {
+        if (hubIpAddress == null) {
+            NetworkUtils networkUtils = new NetworkUtils();
+            hubIpAddress = networkUtils.getIp4NonLoopbackAddressOfThisMachine().getHostAddress();
+
+            if (SwarmUtilities.isSwarmActive()) {
+                ContainerInfo containerInfo = SwarmUtilities.getContainerByIp(hubIpAddress);
+                hubIpAddress = SwarmUtilities.getSwarmIp(containerInfo);
+            }
+        }
+
+        return hubIpAddress;
+    }
+
     public ContainerCreationStatus startDockerSeleniumContainer(final TimeZone timeZone, final Dimension screenSize) {
 
         TimeZone effectiveTimeZone = ObjectUtils.defaultIfNull(timeZone, DEFAULT_TZ);
         Dimension effectiveScreenSize = ObjectUtils.defaultIfNull(screenSize, DEFAULT_SCREEN_SIZE);
 
-        NetworkUtils networkUtils = new NetworkUtils();
-        String hostIpAddress = networkUtils.getIp4NonLoopbackAddressOfThisMachine().getHostAddress();
+        String hostIpAddress = getHubIpAddress();
         String nodePolling = String.valueOf(RandomUtils.nextInt(90, 120) * 1000);
         String nodeRegisterCycle = String.valueOf(RandomUtils.nextInt(60, 90) * 1000);
         String seleniumNodeParams = getSeleniumNodeParameters();
+        String seleniumNodeHost = getSeleniumNodeHost();
         String latestImage = getLatestDownloadedImage(getDockerSeleniumImageName());
 
         int containerPort = LOWER_PORT_BOUNDARY;
-        if (containerClient instanceof DockerContainerClient) {
+        if (containerClient instanceof DockerContainerClient || containerClient instanceof SwarmContainerClient) {
             containerPort = findFreePortInRange();
         }
         Map<String, String> envVars = buildEnvVars(effectiveTimeZone, effectiveScreenSize, hostIpAddress, sendAnonymousUsageInfo,
-            nodePolling, nodeRegisterCycle, seleniumNodeParams, containerPort);
+                nodePolling, nodeRegisterCycle, seleniumNodeParams, seleniumNodeHost, containerPort);
 
         return containerClient.createContainer(getContainerName(), latestImage, envVars, String.valueOf(containerPort));
     }
 
     private Map<String, String> buildEnvVars(TimeZone timeZone, Dimension screenSize, String hostIpAddress,
-            boolean sendAnonymousUsageInfo, String nodePolling, String nodeRegisterCycle,
-            String seleniumNodeParams, int containerPort) {
+                                             boolean sendAnonymousUsageInfo, String nodePolling, String nodeRegisterCycle,
+                                             String seleniumNodeParams, String seleniumNodeHost, int containerPort) {
         final int noVncPort = containerPort + NO_VNC_PORT_GAP;
         final int vncPort = containerPort + VNC_PORT_GAP;
         Map<String, String> envVars = new HashMap<>();
         envVars.put("ZALENIUM", "true");
         envVars.put("SELENIUM_HUB_HOST", hostIpAddress);
         envVars.put("SELENIUM_HUB_PORT", "4445");
-        envVars.put("SELENIUM_NODE_HOST", "0.0.0.0");
+        envVars.put("SELENIUM_NODE_HOST", seleniumNodeHost);
         envVars.put("GRID", "false");
         envVars.put("WAIT_TIMEOUT", "120s");
         envVars.put("PICK_ALL_RANDOM_PORTS", "false");
@@ -316,21 +348,25 @@ public class DockeredSeleniumStarter {
             envVars.put("SELENIUM_NODE_PARAMS", seleniumNodeParams);
         }
 
+        if (SwarmUtilities.isSwarmActive()) {
+            envVars.put("SELENIUM_NODE_HOST", "__CONTAINER_IP__");
+        }
+
         // Add the proxy vars
         envVars.putAll(zaleniumProxyVars);
         return envVars;
     }
 
     public boolean containerHasStarted(ContainerCreationStatus creationStatus) {
-    	return containerClient.isReady(creationStatus);
+        return containerClient.isReady(creationStatus);
     }
 
     public boolean containerHasFinished(ContainerCreationStatus creationStatus) {
-    	return containerClient.isTerminated(creationStatus);
+        return containerClient.isTerminated(creationStatus);
     }
-    
+
     public void stopContainer(String containerId) {
-    	containerClient.stopContainer(containerId);
+        containerClient.stopContainer(containerId);
     }
 
     /*
@@ -402,7 +438,7 @@ public class DockeredSeleniumStarter {
                 int noVncPortNumber = portNumber + NO_VNC_PORT_GAP;
                 int vncPortNumber = portNumber + VNC_PORT_GAP;
                 if (!allocatedPorts.contains(portNumber) && !allocatedPorts.contains(noVncPortNumber)
-                    && !allocatedPorts.contains(vncPortNumber)) {
+                        && !allocatedPorts.contains(vncPortNumber)) {
                     allocatedPorts.add(portNumber);
                     allocatedPorts.add(noVncPortNumber);
                     allocatedPorts.add(vncPortNumber);
